@@ -1,0 +1,40 @@
+{
+  "trained_at": "2026-09-25T18:45:00Z",
+  "n_samples": 8000,
+  "positive_rate": 0.286,
+  "holdout": {
+    "accuracy": 0.9544,
+    "f1": 0.9193,
+    "precision": 0.9306,
+    "recall": 0.9083
+  },
+  "cross_validation": {
+    "folds": 5,
+    "accuracy_mean": 0.9492,
+    "accuracy_std": 0.007,
+    "f1_mean": 0.9093,
+    "f1_std": 0.0121
+  },
+  "feature_importances": [
+    {
+      "feature": "microbial_cfu",
+      "importance": 0.3686
+    },
+    {
+      "feature": "ph",
+      "importance": 0.3367
+    },
+    {
+      "feature": "brix",
+      "importance": 0.22
+    },
+    {
+      "feature": "temperature_c",
+      "importance": 0.0748
+    }
+  ],
+  "confusion": {
+    "true_negatives": 1142,
+    "true_positives": 458
+  }
+}

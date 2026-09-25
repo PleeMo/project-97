@@ -1,0 +1,18 @@
+# Pinned as minimum versions (not exact) so the project installs cleanly on
+# Python 3.12/3.13 — exact pins from the original starter had no 3.13 wheels.
+fastapi>=0.115.0
+uvicorn[standard]>=0.30.6
+sqlalchemy>=2.0.35
+pydantic>=2.9.2
+email-validator>=2.2.0
+pydantic-settings>=2.5.2
+python-jose[cryptography]>=3.3.0
+passlib>=1.7.4
+# bcrypt 4.1+ removed the API passlib 1.7.4 relies on — keep the 4.0.x line.
+bcrypt>=4.0.1,<4.1
+python-multipart>=0.0.9
+qrcode[pil]>=7.4.2
+scikit-learn>=1.5.2
+pandas>=2.2.3
+joblib>=1.4.2
+numpy>=1.26.4

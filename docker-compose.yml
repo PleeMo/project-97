@@ -1,0 +1,29 @@
+# One-command local stack:  docker compose up --build
+#   frontend -> http://localhost:5173
+#   backend  -> http://localhost:8000  (docs at /docs)
+services:
+  backend:
+    build: ./backend
+    ports:
+      - "8000:8000"
+    environment:
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:5173}
+      FRONTEND_URL: ${FRONTEND_URL:-http://localhost:5173}
+      DATABASE_URL: sqlite:////srv/data/traceability.db
+      IP_HASH_SALT: ${IP_HASH_SALT:-dev-salt}
+    volumes:
+      - backend-data:/srv/data
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend
+
+volumes:
+  backend-data:
