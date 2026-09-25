@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { api, saveSession } from '../api'
+import Logo from '../components/Logo.jsx'
 
 const DEMO_ACCOUNTS = [
   { role: 'Admin', email: 'admin@demo.com' },
@@ -48,8 +49,8 @@ export default function Login({ onLogin }) {
     <div className="min-h-screen flex items-center justify-center bg-paper px-4">
       <div className="w-full max-w-sm">
         <div className="text-center mb-8">
-          <span className="text-3xl">🧪</span>
-          <h1 className="font-display text-2xl font-semibold mt-2">TraceCert</h1>
+          <Logo className="w-14 h-14 mx-auto" />
+          <h1 className="font-display text-2xl font-semibold mt-3">TraceCert</h1>
           <p className="text-ink/50 text-sm mt-1">
             {mode === 'login' ? 'Sign in to manage batches and quality checks' : 'Create your traceability account'}
           </p>

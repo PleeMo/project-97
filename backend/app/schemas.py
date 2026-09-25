@@ -91,6 +91,15 @@ class BatchDetailOut(BatchOut):
     raw_material: Optional[RawMaterialBatchOut] = None
 
 
+class BatchPageOut(BaseModel):
+    """Paginated envelope — only used when the `page` query param is present."""
+    items: List[BatchOut] = []
+    total: int
+    page: int
+    page_size: int
+    pages: int
+
+
 # ---------- Quality Test ----------
 class QualityTestCreate(BaseModel):
     batch_id: str

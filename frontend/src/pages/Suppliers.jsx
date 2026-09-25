@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
+import Banner from '../components/Banner.jsx'
 
 const CAN_EDIT = ['admin', 'producer']
 
@@ -73,8 +74,8 @@ export default function Suppliers({ session }) {
         </p>
       </div>
 
-      {error && <p className="text-danger text-sm mb-4">{error}</p>}
-      {notice && <p className="text-teal-dark text-sm mb-4">{notice}</p>}
+      <Banner kind="error" onDismiss={() => setError('')}>{error}</Banner>
+      <Banner kind="success" onDismiss={() => setNotice('')}>{notice}</Banner>
 
       <div className="grid grid-cols-2 gap-6">
         {/* Suppliers */}

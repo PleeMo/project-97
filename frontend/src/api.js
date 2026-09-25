@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
+export const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
 function getToken() {
   return localStorage.getItem('tc_token')
@@ -115,6 +115,9 @@ export const api = {
   // dashboard + analytics
   summary: () => request('/dashboard/summary'),
   analytics: () => request('/dashboard/analytics'),
+
+  // health (public)
+  health: () => request('/health', { auth: false }),
 
   // alerts
   alerts: () => request('/alerts'),

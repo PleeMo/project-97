@@ -90,6 +90,16 @@ async function main() {
     check('dashboard: risk profile chart', await hasText(page, 'Risk profile'))
     check('nav shows Alerts with badge', await hasText(page, 'Alerts'))
 
+    // ---------- app chrome (logo, nav sections, footer) ----------
+    check('sidebar logo rendered',
+      Boolean(await page.$('svg[aria-label="TraceCert logo"]')))
+    check('mobile menu button present',
+      Boolean(await page.$('button[aria-label="Open navigation"]')))
+    check('nav grouped into sections', await hasText(page, 'Workspace'))
+    check('footer shows version', await hasText(page, 'TraceCert v1.0.0'))
+    check('footer shows live API status', await hasText(page, 'API online'))
+    check('footer links to API docs', Boolean(await page.$('a[href$="/docs"]')))
+
     // batch data available for later steps (public verify uses the same list)
     const session = await apiLogin('producer@demo.com')
     const batches0 = await apiGet('/batches', session.access_token)

@@ -509,3 +509,82 @@ class TestDashboard:
         rank = {"critical": 0, "warning": 1, "info": 2}
         assert [rank[a["severity"]] for a in alerts] == sorted(
             rank[a["severity"]] for a in alerts)
+
+
+# ---------------------------------------------------------------- platform
+class TestPlatform:
+    """Cross-cutting polish: readiness probe, request ids, pagination, rate limit."""
+
+    def test_health_is_a_full_readiness_probe(self, client):
+        res = client.get("/health")
+        assert res.status_code == 200
+        body = res.json()
+        assert body["status"] == "ok"
+        assert body["version"]
+        assert body["database"] == "ok"
+        assert body["model"] in ("ml", "untrained")
+        assert body["uptime_seconds"] >= 0
+        assert body["checked_at"].endswith("Z")
+
+    def test_root_advertises_version_and_health(self, client):
+        body = client.get("/").json()
+        assert body["version"] and body["health"] == "/health"
+
+    def test_responses_carry_a_request_id(self, client):
+        res = client.get("/health")
+        assert res.headers.get("X-Request-ID"), "middleware should add a request id"
+        # a client-supplied id is echoed back for distributed tracing
+        res = client.get("/health", headers={"X-Request-ID": "trace-abc-123"})
+        assert res.headers["X-Request-ID"] == "trace-abc-123"
+
+    def test_legacy_batch_list_is_still_a_plain_array(self, client, users):
+        res = client.get("/batches", headers=hdr(users["producer"]))
+        assert res.status_code == 200
+        assert isinstance(res.json(), list)
+
+    def test_paginated_batch_envelope(self, client, users):
+        res = client.get("/batches?page=1&page_size=2", headers=hdr(users["producer"]))
+        assert res.status_code == 200
+        body = res.json()
+        assert set(body) == {"items", "total", "page", "page_size", "pages"}
+        assert len(body["items"]) <= 2
+        assert body["total"] >= len(body["items"])
+        assert body["pages"] >= 1
+        assert isinstance(body["items"][0]["batch_code"], str)
+
+    def test_batch_sorting_asc_and_desc(self, client, users):
+        def codes(order):
+            res = client.get(f"/batches?sort=batch_code&order={order}",
+                             headers=hdr(users["producer"]))
+            assert res.status_code == 200
+            payload = res.json()
+            rows = payload["items"] if isinstance(payload, dict) else payload
+            return [b["batch_code"] for b in rows]
+
+        asc, desc = codes("asc"), codes("desc")
+        assert asc == sorted(asc)
+        assert desc == sorted(desc, reverse=True)
+
+    def test_unknown_sort_field_is_rejected(self, client, users):
+        res = client.get("/batches?sort=password", headers=hdr(users["producer"]))
+        assert res.status_code == 400
+        assert "Cannot sort by" in res.json()["detail"]
+
+    def test_invalid_page_is_rejected(self, client, users):
+        res = client.get("/batches?page=0", headers=hdr(users["producer"]))
+        assert res.status_code == 422
+
+    def test_verify_endpoint_is_rate_limited(self, client):
+        from app.main import VERIFY_RATE_LIMIT, _verify_hits
+
+        _verify_hits.clear()          # don't inherit hits from earlier tests
+        try:
+            for _ in range(VERIFY_RATE_LIMIT):
+                res = client.get("/verify/BQ-RATE-LIMIT-00000?tz=UTC")
+                assert res.status_code == 200
+            res = client.get("/verify/BQ-RATE-LIMIT-00000?tz=UTC")
+            assert res.status_code == 429
+            assert res.headers.get("Retry-After")
+            assert "Too many" in res.json()["detail"]
+        finally:
+            _verify_hits.clear()      # leave the limiter clean for later runs

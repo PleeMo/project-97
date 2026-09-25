@@ -3,6 +3,7 @@ import { useParams, Link } from 'react-router-dom'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.jsx'
 import RiskGauge from '../components/RiskGauge.jsx'
+import Banner from '../components/Banner.jsx'
 import { RiskHistory } from '../components/Charts.jsx'
 
 // Which logistics events the backend accepts from each batch status
@@ -321,8 +322,8 @@ export default function BatchDetail({ session }) {
         </div>
       </div>
 
-      {error && <p className="text-danger text-sm mb-4">{error}</p>}
-      {notice && <p className="text-teal-dark text-sm mb-4">{notice}</p>}
+      <Banner kind="error" onDismiss={() => setError('')}>{error}</Banner>
+      <Banner kind="success" onDismiss={() => setNotice('')}>{notice}</Banner>
 
       <div className="grid grid-cols-2 gap-6">
         {/* Quality tests */}

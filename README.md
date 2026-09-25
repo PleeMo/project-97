@@ -87,8 +87,26 @@ hand-rolled SVG, no chart library.
 
 **UX** — search + status filter + pagination on batches, role-aware
 navigation, a traceability strip on every batch (raw material → supplier →
-dates, with expiry chips), QR code download as PNG.
+dates, with expiry chips), QR code download as PNG. Branded SVG logo and
+favicon, SEO/social meta tags, a collapsible mobile nav with backdrop, a
+shared banner component for errors and notices, and a footer with a **live
+API status dot** (polls `/health`) plus a link to the API docs.
 
+**Platform & ops**
+- `GET /health` is a real readiness probe: version, database `SELECT 1`,
+  ML model presence, process uptime — 200 when ok, 503 when degraded
+- Every response carries an `X-Request-ID` (client-supplied ids are echoed),
+  with one structured access-log line per request: `METHOD path -> status in Xms rid=`
+- **Rate limiting** on the public verify endpoint (per-IP sliding window,
+  `429` + `Retry-After`) so QR scanners can't hammer the API
+- **Server-side pagination + sorting** on `GET /batches` (`page`, `page_size`,
+  `sort`, `order` — whitelisted columns) returning
+  `{items, total, page, page_size, pages}`; omit `page` for the legacy full list
+- **CI** — `.github/workflows/ci.yml` runs pytest, the API smoke test and the
+  frontend production build on every push/PR
+- **Deploy checklist** — `python scripts/deploy_check.py` verifies Python,
+  packages, secrets, DB, ML artifacts, app import and frontend build
+  (`--strict` gates deploys on failures)
 ## Quick start
 
 ### Backend
@@ -157,16 +175,16 @@ one failed QC, one recalled. Try them at http://localhost:5173/verify.
 
 Three suites, all green at the time of writing:
 
-```bash# 1. Unit/API tests (47 tests) — no server needed, isolated test DB
+```bash
+# 1. Unit/API tests (56 tests) — no server needed, isolated test DB
 cd backend
 pip install -r requirements-dev.txt
 python -m pytest
 
-
-# 2. API end-to-end (66 checks) — server must be running on :8000
+# 2. API end-to-end (70 checks) — server must be running on :8000
 cd backend && python scripts/smoke_test.py http://localhost:8000
 
-# 3. Browser end-to-end (55 checks) — both servers must be running
+# 3. Browser end-to-end (61 checks) — both servers must be running
 cd frontend && npm run e2e        # drives Chrome against :5173
 ```
 
@@ -187,6 +205,8 @@ Backend reads `.env` (see `backend/.env.example`) or plain environment vars:
 | `FRONTEND_URL` | absolute URL baked into QR codes | *(relative)* |
 | `DATABASE_URL` | SQLite file or Postgres DSN | `sqlite:///./traceability.db` |
 | `IP_HASH_SALT` | salts hashed scan IPs | dev salt |
+| `VERIFY_RATE_LIMIT` | verify requests allowed per window (per IP) | `60` |
+| `VERIFY_RATE_WINDOW` | rate-limit window in seconds | `60` |
 
 Frontend: `VITE_API_URL` (see `frontend/.env.example`).
 
@@ -208,6 +228,7 @@ Frontend: `VITE_API_URL` (see `frontend/.env.example`).
 - `seed.py` — demo data (users, batches, certificates, cold chain, scans)
 - `simulate_cold_chain.py` — IoT simulator CLI (bulk or live `--push`)
 - `scripts/smoke_test.py` — API end-to-end checks
+- `scripts/deploy_check.py` — pre-deployment readiness checklist
 
 **Frontend** (`frontend/src/`)
 - `api.js` — fetch wrapper for every endpoint
@@ -216,8 +237,9 @@ Frontend: `VITE_API_URL` (see `frontend/.env.example`).
   certificates + supply chain + cold-chain chart + anti-counterfeit +
   traceability strip + full timeline + QR + recall), Suppliers (+scorecard),
   Recalls, Alerts, Verify (public), PrintQr (printable label sheet)
-- `components/` — Layout (role-aware nav + alert badge), StatusBadge,
-  RiskGauge, Charts (SVG trend/donut/bars/sparkline)
+- `components/` — Layout (role-aware nav + alert badge + mobile drawer +
+  API-status footer), Logo (SVG brand mark), Banner (error/notice banners),
+  StatusBadge, RiskGauge, Charts (SVG trend/donut/bars/sparkline)
 - `scripts/e2e.mjs` — puppeteer-core browser checks
 
 ## Deploying
@@ -229,7 +251,18 @@ Frontend: `VITE_API_URL` (see `frontend/.env.example`).
 #          -> set VITE_API_URL to the deployed API origin at build time
 ```
 
-Or run the compose file on any VPS. Before any real deployment:
+GitHub Actions (`.github/workflows/ci.yml`) runs the pytest suite, the API
+smoke test and the frontend build on every push to `main` and on PRs.
+
+Before any real deployment, run the readiness checklist:
+
+```bash
+cd backend && python scripts/deploy_check.py --strict
+```
+
+It fails the build on missing packages, a default/short `JWT_SECRET` or a
+missing model, and warns on demo-grade settings. Then:
+
 - set a strong `JWT_SECRET` and `IP_HASH_SALT`
 - restrict `CORS_ORIGINS` to your frontend domain
 - set `FRONTEND_URL` so QR codes encode absolute, scannable URLs

@@ -2,6 +2,7 @@ import React, { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { api } from '../api'
 import StatusBadge from '../components/StatusBadge.jsx'
+import Banner from '../components/Banner.jsx'
 
 const CAN_CREATE = ['admin', 'producer']
 const PAGE_SIZE = 10
@@ -137,7 +138,7 @@ export default function Batches({ session }) {
         </form>
       )}
 
-      {error && <p className="text-danger text-sm mb-4">{error}</p>}
+      <Banner kind="error" onDismiss={() => setError('')}>{error}</Banner>
 
       <div className="flex gap-3 mb-4">
         <input

@@ -74,6 +74,17 @@ def main():
     # --- health / root ---
     status, body = call("GET", "/health")
     check("GET /health", status == 200 and body.get("status") == "ok")
+    check("GET /health readiness fields (version/db/model/uptime)",
+          bool(body.get("version")) and body.get("database") == "ok"
+          and body.get("model") in ("ml", "untrained")
+          and isinstance(body.get("uptime_seconds"), int),
+          detail=str(body))
+
+    rid_headers = {}
+    call("GET", "/health", out_headers=rid_headers)
+    check("responses carry X-Request-ID",
+          any(k.lower() == "x-request-id" for k in rid_headers),
+          detail=str(list(rid_headers)))
 
     # --- auth ---
     admin_token, admin = login("admin@demo.com")
@@ -127,6 +138,17 @@ def main():
 
     status, body = call("GET", "/batches")
     check("GET /batches", status == 200 and len(body) >= 5)
+
+    status, body = call("GET", "/batches?page=1&page_size=2")
+    check("GET /batches paginated envelope",
+          status == 200 and isinstance(body, dict)
+          and set(body) == {"items", "total", "page", "page_size", "pages"}
+          and len(body["items"]) <= 2,
+          detail=str(body))
+
+    status, body = call("GET", "/batches?sort=not_a_column")
+    check("GET /batches rejects unknown sort field (400)", status == 400,
+          detail=str(body))
 
     status, body = call("GET", f"/batches/{batch_id}")
     check("GET /batches/{id} detail", status == 200 and "quality_tests" in body)

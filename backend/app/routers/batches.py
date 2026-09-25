@@ -1,15 +1,27 @@
 import random
 import string
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from math import ceil
+from typing import List, Optional, Union
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from typing import List
 
 from app.database import get_db
 from app import models, schemas, auth
 from app.routers.cold_chain import SAFE_MIN_C, SAFE_MAX_C
 
 router = APIRouter(prefix="/batches", tags=["batches"])
+
+# Columns the API accepts for sorting (whitelist — no raw SQL identifiers).
+SORTABLE = {
+    "production_date": models.Batch.production_date,
+    "batch_code": models.Batch.batch_code,
+    "product_name": models.Batch.product_name,
+    "status": models.Batch.status,
+    "expiry_date": models.Batch.expiry_date,
+    "created_at": models.Batch.created_at,
+}
 
 
 def generate_batch_code(db: Session) -> str:
@@ -49,9 +61,45 @@ def create_batch(payload: schemas.BatchCreate, db: Session = Depends(get_db),
     return batch
 
 
-@router.get("", response_model=List[schemas.BatchOut])
-def list_batches(db: Session = Depends(get_db)):
-    return db.query(models.Batch).order_by(models.Batch.created_at.desc()).all()
+@router.get("", response_model=Union[List[schemas.BatchOut], schemas.BatchPageOut])
+def list_batches(
+    db: Session = Depends(get_db),
+    page: Optional[int] = Query(None, ge=1, description="Page number — omit for the full (legacy) list"),
+    page_size: int = Query(20, ge=1, le=100, description="Rows per page (max 100)"),
+    sort: Optional[str] = Query(None, description=f"Sort column: {', '.join(SORTABLE)}"),
+    order: str = Query("desc", pattern="^(asc|desc)$", description="Sort direction"),
+):
+    """List batches.
+
+    Without `page` this returns the full array (backwards compatible).
+    With `page` it returns an envelope `{items, total, page, page_size, pages}`.
+    `sort`/`order` apply in both modes.
+    """
+    if sort is not None and sort not in SORTABLE:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot sort by '{sort}'. Valid fields: {', '.join(sorted(SORTABLE))}",
+        )
+
+    query = db.query(models.Batch)
+    if sort is None:
+        query = query.order_by(models.Batch.created_at.desc())   # historical default
+    else:
+        column = SORTABLE[sort]
+        query = query.order_by(column.desc() if order == "desc" else column.asc())
+
+    if page is None:
+        return query.all()
+
+    total = query.count()
+    rows = query.offset((page - 1) * page_size).limit(page_size).all()
+    return schemas.BatchPageOut(
+        items=rows,
+        total=total,
+        page=page,
+        page_size=page_size,
+        pages=max(1, ceil(total / page_size)),
+    )
 
 
 @router.get("/{batch_id}", response_model=schemas.BatchDetailOut)
