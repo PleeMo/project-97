@@ -150,8 +150,11 @@ docker compose up --build         # frontend :5173, backend :8000
 | Distributor | distributor@demo.com |
 | Retailer | retailer@demo.com |
 
-The seed script prints 4 demo batch codes — one delivered, one in transit,
-one failed QC, one recalled. Try them at http://localhost:5173/verify.
+The seed creates a full demo dataset: **16 batches across 5 suppliers and
+3 recalls**, covering every lifecycle status (delivered, in transit, in
+production, passed/failed QC, recalled) plus near-expiry and already-expired
+stock to light up the alerts feed. The seed output prints the key batch
+codes — try them at http://localhost:5173/verify.
 
 ### Demo scripts (great for a project defense)
 
@@ -167,7 +170,11 @@ one failed QC, one recalled. Try them at http://localhost:5173/verify.
 5. **Attach a certificate** — ➕ on any QC test row, then 📎 to download it.
 6. **Walk the full timeline** — open any batch: production → QC → scans →
    breaches → recall in one expandable feed.
-7. **Hand out QR labels** — *Print label sheet 🖨* on a batch page prints 8
+7. **Review recalls & alerts** — the Recalls page lists 3 seeded recalls
+   (microbial, labelling, seal integrity) with affected locations; the
+   Alerts feed sorts them with QC failures, cold-chain breaches, the cloned
+   QR flag and expiring/expired stock, critical first.
+8. **Hand out QR labels** — *Print label sheet 🖨* on a batch page prints 8
    scannable labels; *Export CSV* on the Batches page feeds an audit
    spreadsheet.
 

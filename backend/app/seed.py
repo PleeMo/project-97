@@ -1,8 +1,10 @@
 """
-Seeds the database with demo users, suppliers, raw materials, batches
-(some passing, one failing, one recalled) with quality tests, supply chain
-events, cold-chain readings, QR scan telemetry and a demo lab certificate —
-so every screen in the frontend has something to show immediately.
+Seeds the database with demo users, 5 suppliers, raw-material lots, 16
+batches covering every lifecycle status (delivered, in transit, in
+production, passed/failed QC, recalled), quality tests, supply-chain
+events, cold-chain readings, QR scan telemetry, 3 recalls and a demo
+lab certificate — so every screen in the frontend has something to show
+immediately.
 
 Run:  python -m app.seed
 """
@@ -77,41 +79,77 @@ def run():
         db.add_all([admin, producer, distributor, retailer])
         db.commit()
 
-        # --- Supplier + raw material ---
-        supplier = models.Supplier(name="Musanze Orchards Co-op", location="Musanze, Rwanda", contact="+250700000000")
-        db.add(supplier)
+        # --- Suppliers + raw-material lots (roots of every traceability chain) ---
+        suppliers = {
+            "musanze": models.Supplier(name="Musanze Orchards Co-op",
+                                       location="Musanze, Rwanda", contact="+250700000000"),
+            "kivu": models.Supplier(name="Kivu Bay Citrus",
+                                    location="Gisenyi, Rwanda", contact="+250700111111"),
+            "nyungwe": models.Supplier(name="Nyungwe Plantations",
+                                       location="Nyamasheke, Rwanda", contact="+250700222222"),
+            "gitenge": models.Supplier(name="Gitenge Tea Estates",
+                                       location="Ruhengeri, Rwanda", contact="+250700333333"),
+            "akagera": models.Supplier(name="Akagera Springs Water",
+                                       location="Kirehe, Rwanda", contact="+250700444444"),
+        }
+        db.add_all(suppliers.values())
         db.commit()
 
-        raw_material = models.RawMaterialBatch(
-            supplier_id=supplier.id, material_type="Passion Fruit", quantity_kg=500,
-        )
-        db.add(raw_material)
-        db.commit()
+        lots = {}
 
-        def make_batch(product_name, days_ago, volume, ph, brix, microbial_cfu, temperature_c, journey):
+        def add_lot(key, supplier, material, kg):
+            lot = models.RawMaterialBatch(
+                supplier_id=supplier.id, material_type=material, quantity_kg=kg,
+            )
+            db.add(lot)
+            db.commit()
+            db.refresh(lot)
+            lots[key] = lot
+
+        add_lot("passion1", suppliers["musanze"], "Passion Fruit", 500)
+        add_lot("passion2", suppliers["musanze"], "Passion Fruit", 300)
+        add_lot("oranges", suppliers["kivu"], "Oranges", 800)
+        add_lot("pineapple", suppliers["kivu"], "Pineapples", 450)
+        add_lot("mango", suppliers["nyungwe"], "Mangoes", 600)
+        add_lot("soursop", suppliers["nyungwe"], "Soursop", 200)
+        add_lot("tea", suppliers["gitenge"], "Green Tea Leaves", 250)
+        add_lot("hibiscus", suppliers["gitenge"], "Hibiscus Flowers", 150)
+        add_lot("water", suppliers["akagera"], "Purified Water", 1500)
+        add_lot("lemons", suppliers["akagera"], "Lemons", 300)
+
+        def make_batch(product_name, lot_key, days_ago, volume, qc=None, journey=(),
+                       expiry_days=None):
+            """Create a batch with QR code, optional QC test and a supply-chain
+            journey. `qc=None` leaves the batch in production (no test yet)."""
             batch = models.Batch(
                 batch_code=generate_batch_code(db),
                 product_name=product_name,
-                raw_material_id=raw_material.id,
+                raw_material_id=lots[lot_key].id,
                 production_date=models.utcnow() - timedelta(days=days_ago),
-                expiry_date=models.utcnow() + timedelta(days=90 - days_ago),
+                expiry_date=models.utcnow() + timedelta(
+                    days=expiry_days if expiry_days is not None else 90 - days_ago),
                 volume_liters=volume,
                 created_by=producer.id,
             )
+            if qc is None:
+                batch.status = models.BatchStatusEnum.in_production
             db.add(batch)
             db.commit()
             db.refresh(batch)
 
             db.add(models.QRCode(batch_id=batch.id, code_value=batch.batch_code))
 
-            scored = risk_score(ph=ph, brix=brix, microbial_cfu=microbial_cfu, temperature_c=temperature_c)
-            test = models.QualityTest(
-                batch_id=batch.id, ph=ph, brix=brix, microbial_cfu=microbial_cfu,
-                temperature_c=temperature_c, result=scored["result"], risk_score=scored["risk_score"],
-                tested_by=producer.id,
-            )
-            db.add(test)
-            batch.status = models.BatchStatusEnum.passed_qc if scored["result"] == "pass" else models.BatchStatusEnum.failed_qc
+            if qc:
+                scored = risk_score(**qc)
+                test = models.QualityTest(
+                    batch_id=batch.id, **qc,
+                    result=scored["result"], risk_score=scored["risk_score"],
+                    tested_by=producer.id,
+                )
+                db.add(test)
+                batch.status = (models.BatchStatusEnum.passed_qc
+                                if scored["result"] == "pass"
+                                else models.BatchStatusEnum.failed_qc)
 
             base_time = batch.production_date
             for i, (actor, event_type, location) in enumerate(journey, start=1):
@@ -130,70 +168,150 @@ def run():
             db.commit()
             return batch
 
+        # Reusable journey legs
+        PRODUCED = (producer, models.EventTypeEnum.produced, "Kivu Juice Factory")
+        QC_LAB = (producer, models.EventTypeEnum.quality_check, "Kivu Juice Factory QC Lab")
+        SHIP_HUB = (distributor, models.EventTypeEnum.shipped, "Rwanda Logistics Co - Kigali Hub")
+
+        def delivered_journey(receive_at, sell_at):
+            return [PRODUCED, QC_LAB, SHIP_HUB,
+                    (retailer, models.EventTypeEnum.received, receive_at),
+                    (retailer, models.EventTypeEnum.sold, sell_at)]
+
+        # ---- flagship demo batches (codes printed at the end of the seed) ----
+
         # Healthy batch, fully delivered
         b1 = make_batch(
-            "Passion Fruit Juice 1L", days_ago=10, volume=1000,
-            ph=3.6, brix=13.0, microbial_cfu=15, temperature_c=4.0,
-            journey=[
-                (producer, models.EventTypeEnum.produced, "Kivu Juice Factory"),
-                (producer, models.EventTypeEnum.quality_check, "Kivu Juice Factory QC Lab"),
-                (distributor, models.EventTypeEnum.shipped, "Rwanda Logistics Co - Kigali Hub"),
-                (retailer, models.EventTypeEnum.received, "Kigali FreshMart"),
-                (retailer, models.EventTypeEnum.sold, "Kigali FreshMart"),
-            ],
+            "Passion Fruit Juice 1L", "passion1", days_ago=10, volume=1000,
+            qc=dict(ph=3.6, brix=13.0, microbial_cfu=15, temperature_c=4.0),
+            journey=delivered_journey("Kigali FreshMart", "Kigali FreshMart"),
         )
 
-        # In-transit batch, borderline but passing
+        # In-transit batch, borderline but passing — the cloned-QR demo
         b2 = make_batch(
-            "Passion Fruit Juice 500ml", days_ago=3, volume=600,
-            ph=3.9, brix=11.5, microbial_cfu=40, temperature_c=6.0,
-            journey=[
-                (producer, models.EventTypeEnum.produced, "Kivu Juice Factory"),
-                (producer, models.EventTypeEnum.quality_check, "Kivu Juice Factory QC Lab"),
-                (distributor, models.EventTypeEnum.shipped, "Rwanda Logistics Co - Kigali Hub"),
-            ],
+            "Passion Fruit Juice 500ml", "passion1", days_ago=3, volume=600,
+            qc=dict(ph=3.9, brix=11.5, microbial_cfu=40, temperature_c=6.0),
+            journey=[PRODUCED, QC_LAB, SHIP_HUB],
         )
 
         # Failed QC batch — cold chain breach + high microbial count
         b3 = make_batch(
-            "Mixed Berry Juice 1L", days_ago=1, volume=400,
-            ph=3.2, brix=9.0, microbial_cfu=180, temperature_c=11.0,
-            journey=[
-                (producer, models.EventTypeEnum.produced, "Kivu Juice Factory"),
-                (producer, models.EventTypeEnum.quality_check, "Kivu Juice Factory QC Lab"),
-            ],
+            "Mixed Berry Juice 1L", "passion1", days_ago=1, volume=400,
+            qc=dict(ph=3.2, brix=9.0, microbial_cfu=180, temperature_c=11.0),
+            journey=[PRODUCED, QC_LAB],
         )
 
-        # Recalled batch (already delivered before the issue was found — good recall demo)
+        # Recalled batch (already delivered before the issue was found)
         b4 = make_batch(
-            "Mango Juice 1L", days_ago=15, volume=800,
-            ph=3.5, brix=13.5, microbial_cfu=20, temperature_c=4.0,
-            journey=[
-                (producer, models.EventTypeEnum.produced, "Kivu Juice Factory"),
-                (producer, models.EventTypeEnum.quality_check, "Kivu Juice Factory QC Lab"),
-                (distributor, models.EventTypeEnum.shipped, "Rwanda Logistics Co - Kigali Hub"),
-                (retailer, models.EventTypeEnum.received, "Huye Fresh Market"),
-                (retailer, models.EventTypeEnum.sold, "Huye Fresh Market"),
-            ],
+            "Mango Juice 1L", "mango", days_ago=15, volume=800,
+            qc=dict(ph=3.5, brix=13.5, microbial_cfu=20, temperature_c=4.0),
+            journey=delivered_journey("Huye Fresh Market", "Huye Fresh Market"),
         )
-        events = db.query(models.SupplyChainEvent).filter(models.SupplyChainEvent.batch_id == b4.id).all()
-        locations = sorted({e.location for e in events if e.location})
-        db.add(models.RecallLog(
-            batch_id=b4.id, reason="Post-market microbial re-test exceeded safety threshold.",
-            triggered_by=admin.id, affected_locations=", ".join(locations),
-        ))
-        b4.status = models.BatchStatusEnum.recalled
-        db.commit()
 
-        # --- Cold-chain readings (simulated IoT history per batch) ---
+        # ---- still on the production line (no QC test yet → "untested" risk) ----
+        lemonade = make_batch(
+            "Cold-Pressed Lemonade 1L", "lemons", days_ago=2, volume=500,
+            qc=None, journey=[PRODUCED], expiry_days=60,
+        )
+        soursop = make_batch(
+            "Soursop Smoothie 1L", "soursop", days_ago=1, volume=300,
+            qc=None, journey=[PRODUCED], expiry_days=45,
+        )
+
+        # ---- passed QC, waiting in stock ----
+        nectar = make_batch(
+            "Passion Fruit Nectar 1L", "passion1", days_ago=7, volume=900,
+            qc=dict(ph=3.7, brix=12.8, microbial_cfu=18, temperature_c=4.2),
+            journey=[PRODUCED, QC_LAB],
+        )
+        orange = make_batch(
+            "Orange Juice 1L", "oranges", days_ago=6, volume=1200,
+            qc=dict(ph=4.0, brix=11.8, microbial_cfu=22, temperature_c=3.8),
+            journey=[PRODUCED, QC_LAB],
+        )
+
+        # ---- second QC failure (a different failure mode: too sweet, too warm) ----
+        blend = make_batch(
+            "Carrot & Mango Blend 1L", "mango", days_ago=2, volume=350,
+            qc=dict(ph=5.6, brix=4.0, microbial_cfu=640, temperature_c=9.5),
+            journey=[PRODUCED, QC_LAB],
+        )
+
+        # ---- in transit ----
+        bissap = make_batch(
+            "Bissap Hibiscus Drink 1L", "hibiscus", days_ago=4, volume=700,
+            qc=dict(ph=3.4, brix=10.5, microbial_cfu=30, temperature_c=5.5),
+            journey=[PRODUCED, QC_LAB, SHIP_HUB],
+        )
+        ginger = make_batch(
+            "Ginger Lemonade 750ml", "lemons", days_ago=5, volume=550,
+            qc=dict(ph=3.8, brix=10.0, microbial_cfu=25, temperature_c=4.5),
+            journey=[PRODUCED, QC_LAB, SHIP_HUB],
+        )
+
+        # ---- two more recalls, different reasons and routes ----
+        tea = make_batch(
+            "Iced Green Tea 1L", "tea", days_ago=20, volume=650,
+            qc=dict(ph=4.2, brix=8.5, microbial_cfu=35, temperature_c=5.0),
+            journey=delivered_journey("Musanze Supermarket", "Musanze Supermarket"),
+        )
+        concentrate = make_batch(
+            "Passion Fruit Concentrate 2L", "passion2", days_ago=25, volume=450,
+            qc=dict(ph=3.3, brix=16.0, microbial_cfu=12, temperature_c=4.0),
+            journey=delivered_journey("Gisenyi Corner Store", "Gisenyi Corner Store"),
+        )
+
+        # ---- stock that is past / approaching its expiry date ----
+        fizz = make_batch(
+            "Pineapple Fizz 1L", "pineapple", days_ago=85, volume=750,
+            qc=dict(ph=3.9, brix=12.0, microbial_cfu=28, temperature_c=4.4),
+            journey=delivered_journey("Kigali FreshMart", "Kigali FreshMart"),
+            expiry_days=5,                       # expires within the 7-day warning window
+        )
+        mango_nectar = make_batch(
+            "Mango Nectar 250ml", "mango", days_ago=100, volume=300,
+            qc=dict(ph=4.1, brix=13.2, microbial_cfu=45, temperature_c=4.8),
+            journey=delivered_journey("Huye Fresh Market", "Huye Fresh Market"),
+            expiry_days=-10,                     # already expired — critical alert demo
+        )
+
+        # ---- newest batch: a fresh, fully traced delivery (listed first in the UI) ----
+        tropical = make_batch(
+            "Tropical Mix Juice 1L", "mango", days_ago=3, volume=1000,
+            qc=dict(ph=3.6, brix=12.6, microbial_cfu=16, temperature_c=4.1),
+            journey=delivered_journey("Kigali FreshMart", "Kigali FreshMart"),
+        )
+
+        # --- Recalls (3 examples: microbial, labelling, seal integrity) ---
+        def add_recall(batch, reason):
+            events = db.query(models.SupplyChainEvent).filter(
+                models.SupplyChainEvent.batch_id == batch.id).all()
+            locations = sorted({e.location for e in events if e.location})
+            db.add(models.RecallLog(
+                batch_id=batch.id, reason=reason, triggered_by=admin.id,
+                affected_locations=", ".join(locations),
+            ))
+            batch.status = models.BatchStatusEnum.recalled
+            db.commit()
+
+        add_recall(b4, "Post-market microbial re-test exceeded safety threshold.")
+        add_recall(tea, "Label declared incorrect caffeine content — labelling "
+                        "non-compliance found during market surveillance.")
+        add_recall(concentrate, "Seal integrity failure reported by retailers — "
+                                "leakage creates a secondary contamination risk.")
+
+        # --- Cold-chain readings (simulated IoT history per tested batch) ---
         cold_chain_specs = {
             b1.id: dict(hours=48, induce_breach=False),
             b2.id: dict(hours=24, induce_breach=False),
-            b3.id: dict(hours=24, induce_breach=True),   # the failed batch also broke the cold chain
+            b3.id: dict(hours=24, induce_breach=True),    # failed batch also broke the cold chain
             b4.id: dict(hours=72, induce_breach=False),
+            bissap.id: dict(hours=12, induce_breach=True),  # a second, milder incident
         }
-        for b in (b1, b2, b3, b4):
-            for reading in generate_readings(b, **cold_chain_specs[b.id]):
+        tested = db.query(models.Batch).join(models.QualityTest).all()
+        for b in tested:
+            spec = cold_chain_specs.get(b.id, dict(hours=12, induce_breach=False))
+            for reading in generate_readings(b, **spec):
                 db.add(reading)
         db.commit()
 
@@ -213,11 +331,15 @@ def run():
             if batch.qr_code:
                 batch.qr_code.scan_count = len(specs)
 
-        # Genuine batch: a handful of scans, same place — no flags.
+        # Genuine batches: a handful of scans, same place — no flags.
         add_scans(b1, [
             (50, "Africa/Kigali", MOBILE_UA),
             (31, "Africa/Kigali", ANDROID_UA),
             (6, "Africa/Kigali", MOBILE_UA),
+        ])
+        add_scans(tropical, [
+            (30, "Africa/Kigali", MOBILE_UA),
+            (9, "Africa/Kigali", ANDROID_UA),
         ])
 
         # Cloned-code demo: one code "used" all over the world in hours.
@@ -263,18 +385,30 @@ def run():
             ])).decode()
             db.commit()
 
+        n_batches = db.query(models.Batch).count()
+        n_suppliers = db.query(models.Supplier).count()
+        n_recalls = db.query(models.RecallLog).count()
+        n_readings = db.query(models.TemperatureReading).count()
+        n_scans = db.query(models.QRScan).count()
+
         print("Seed complete. Demo logins (password: password123):")
         print("  admin@demo.com | producer@demo.com | distributor@demo.com | retailer@demo.com")
-        print("Demo batch codes to try on the public verify page:")
-        for b in (b1, b2, b3, b4):
+        print(f"Demo data: {n_batches} batches · {n_suppliers} suppliers · "
+              f"{n_recalls} recalls · {n_readings} temperature readings · {n_scans} scans")
+        print("Batch codes to try on the public verify page:")
+        for b in (b1, b2, b3, b4, tropical, tea):
             print(f"  {b.batch_code} -> {b.product_name} ({b.status.value})")
-        print("Anti-counterfeit demo: open the first code a few times from the verify "
-              f"page, and inspect {b2.batch_code} in the dashboard — its QR code was "
-              "seeded with scans from 5 different countries.")
+        print("Anti-counterfeit demo: inspect " + b2.batch_code + " in the dashboard — its "
+              "QR code was seeded with scans from 5 different countries.")
+        print("Recall demo: the Recalls page lists all "
+              f"{n_recalls} recalls with their affected locations.")
 
     finally:
         db.close()
 
 
 if __name__ == "__main__":
+    import sys
+    if hasattr(sys.stdout, "reconfigure"):   # Windows cp1252 consoles: keep ✓/· intact
+        sys.stdout.reconfigure(encoding="utf-8")
     run()
